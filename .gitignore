@@ -1,0 +1,14 @@
+.next
+node_modules
+.env.local
+.env*.local
+.DS_Store
+.vercel
+coverage
+*.log
+/tmp
+
+*.cs
+*.cs.txt
+
+trading-ideas
