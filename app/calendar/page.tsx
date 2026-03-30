@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '../../components/Sidebar';
@@ -148,23 +149,32 @@ export default function CalendarPage() {
             {weeks.map((week) => (
               <div key={week.label} className="calendar-week-row">
                 {week.days.map((day) => (
-                  <button
-                    key={day.date}
-                    type="button"
-                    className={`calendar-cell expanded ${day.inMonth ? '' : 'muted-cell'}`}
-                    style={{ cursor: day.trades > 0 ? 'pointer' : 'default', textAlign: 'left' }}
-                    onClick={() => {
-                      if (day.trades > 0) {
-                        router.push(`/trades?day=${day.date}`);
-                      }
-                    }}
-                  >
-                    <div className="calendar-day-number">{day.dayNumber}</div>
-                    <div className={`calendar-pnl ${day.netPnl >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>
-                      {formatCurrency(day.netPnl)}
+                  day.inMonth ? (
+                    <Link
+                      key={day.date}
+                      href={`/trades?day=${day.date}`}
+                      className={`calendar-cell expanded ${day.trades === 0 ? 'muted-cell' : ''}`}
+                      style={{ cursor: 'pointer', textAlign: 'left', color: 'var(--ink)', textDecoration: 'none' }}
+                    >
+                      <div className="calendar-day-number">{day.dayNumber}</div>
+                      <div className={`calendar-pnl ${day.netPnl >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>
+                        {formatCurrency(day.netPnl)}
+                      </div>
+                      <div className="sub">{day.trades} trades</div>
+                    </Link>
+                  ) : (
+                    <div
+                      key={day.date}
+                      className="calendar-cell expanded muted-cell"
+                      style={{ textAlign: 'left' }}
+                    >
+                      <div className="calendar-day-number">{day.dayNumber}</div>
+                      <div className={`calendar-pnl ${day.netPnl >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>
+                        {formatCurrency(day.netPnl)}
+                      </div>
+                      <div className="sub">{day.trades} trades</div>
                     </div>
-                    <div className="sub">{day.trades} trades</div>
-                  </button>
+                  )
                 ))}
                 <div className="calendar-total-cell expanded">
                   <strong>{week.label}</strong>
