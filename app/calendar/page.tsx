@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Sidebar from '../../components/Sidebar';
 import { formatMonthLabel } from '../../lib/metrics';
 import { groupCopiedTrades } from '../../lib/tradeBundles';
@@ -10,7 +11,12 @@ import { CalendarWeek } from '../../lib/types';
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value);
 
-const toDateKey = (date: Date) => date.toISOString().split('T')[0];
+const toDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const addDays = (date: Date, days: number) => {
   const next = new Date(date);
@@ -55,6 +61,7 @@ const buildCalendarMonthFromDaily = (
 };
 
 export default function CalendarPage() {
+  const router = useRouter();
   const [monthOffset, setMonthOffset] = useState(0);
   const [pnlMode, setPnlMode] = useState<'gross' | 'net'>('gross');
   const { trades, loading } = useTradingData();
@@ -141,13 +148,23 @@ export default function CalendarPage() {
             {weeks.map((week) => (
               <div key={week.label} className="calendar-week-row">
                 {week.days.map((day) => (
-                  <div key={day.date} className={`calendar-cell expanded ${day.inMonth ? '' : 'muted-cell'}`}>
+                  <button
+                    key={day.date}
+                    type="button"
+                    className={`calendar-cell expanded ${day.inMonth ? '' : 'muted-cell'}`}
+                    style={{ cursor: day.trades > 0 ? 'pointer' : 'default', textAlign: 'left' }}
+                    onClick={() => {
+                      if (day.trades > 0) {
+                        router.push(`/trades?day=${day.date}`);
+                      }
+                    }}
+                  >
                     <div className="calendar-day-number">{day.dayNumber}</div>
                     <div className={`calendar-pnl ${day.netPnl >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>
                       {formatCurrency(day.netPnl)}
                     </div>
                     <div className="sub">{day.trades} trades</div>
-                  </div>
+                  </button>
                 ))}
                 <div className="calendar-total-cell expanded">
                   <strong>{week.label}</strong>

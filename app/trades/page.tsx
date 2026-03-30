@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Suspense, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '../../components/Sidebar';
 import { supabase } from '../../lib/supabase';
 import { groupCopiedTrades, TradeBundle } from '../../lib/tradeBundles';
@@ -17,18 +18,34 @@ const formatDateTime = (value: Date) =>
     minute: '2-digit'
   }).format(value);
 
-export default function TradesPage() {
+const toDateKey = (value: Date) => {
+  const year = value.getFullYear();
+  const month = `${value.getMonth() + 1}`.padStart(2, '0');
+  const day = `${value.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+function TradesPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { trades, reload, loading, error } = useTradingData();
   const [message, setMessage] = useState('');
   const [savingId, setSavingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [selectedBundles, setSelectedBundles] = useState<Record<string, boolean>>({});
   const [drafts, setDrafts] = useState<Record<string, { tags: string; note: string }>>({});
+  const selectedDay = searchParams.get('day');
 
-  const bundledTradeList = useMemo(
-    () => groupCopiedTrades(trades),
-    [trades]
-  );
+  const bundledTradeList = useMemo(() => {
+    const bundles = groupCopiedTrades(trades);
+    if (!selectedDay) {
+      return bundles;
+    }
+
+    return bundles.filter((bundle) =>
+      bundle.trades.some((trade) => toDateKey(trade.exitTime) === selectedDay)
+    );
+  }, [selectedDay, trades]);
 
   const allSelected =
     bundledTradeList.length > 0 && bundledTradeList.every((bundle) => selectedBundles[bundle.key]);
@@ -129,6 +146,19 @@ export default function TradesPage() {
           </div>
         </div>
 
+        {selectedDay ? (
+          <div className="callout" style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <div>Showing only bundled trades for <strong>{selectedDay}</strong>.</div>
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => router.push('/trades')}
+            >
+              Clear Day Filter
+            </button>
+          </div>
+        ) : null}
+
         {error ? <div className="callout danger-callout">{error}</div> : null}
         {message ? <div className="callout">{message}</div> : null}
         <div className="callout" style={{ marginBottom: '16px' }}>
@@ -224,5 +254,27 @@ export default function TradesPage() {
         </section>
       </main>
     </div>
+  );
+}
+
+export default function TradesPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="app-shell">
+          <Sidebar />
+          <main className="main">
+            <div className="header-row">
+              <div>
+                <div className="h1">Trades</div>
+                <div className="hero-subtitle">Loading your trade journal...</div>
+              </div>
+            </div>
+          </main>
+        </div>
+      }
+    >
+      <TradesPageContent />
+    </Suspense>
   );
 }
