@@ -28,6 +28,13 @@ const formatCurrency = (value: number) =>
 const formatDays = (value: number) => `${value.toFixed(1)} days`;
 
 const formatMinutes = (value: number) => `${value.toFixed(1)} min`;
+const formatDateTime = (value: Date) =>
+  new Intl.DateTimeFormat('en-US', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(value);
 const normalizeAccountKey = (value: string) => value.replace(/\D/g, '').slice(-2);
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 const addDays = (date: Date, days: number) => {
@@ -121,6 +128,16 @@ export default function DashboardPage() {
     Math.floor((rangeConfig.end.getTime() - rangeConfig.start.getTime()) / 86400000) + 1
   );
   const averageDailyProfit = totalPnl(filteredTrades) / rangeDays;
+  const bestTrade = filteredTrades.reduce<typeof filteredTrades[number] | null>(
+    (best, trade) => (!best || trade.netPnl > best.netPnl ? trade : best),
+    null
+  );
+  const worstTrade = filteredTrades.reduce<typeof filteredTrades[number] | null>(
+    (worst, trade) => (!worst || trade.netPnl < worst.netPnl ? trade : worst),
+    null
+  );
+  const directionWinRate = (direction: 'Long' | 'Short') =>
+    winRate(filteredTrades.filter((trade) => trade.side === direction));
 
   const payoutCycleAvg = (() => {
     if (payouts.length < 2) return 0;
@@ -236,6 +253,38 @@ export default function DashboardPage() {
             <h3>Payout Processing</h3>
             <div className="value">{formatDays(payoutProcessingAvg)}</div>
             <div className="sub">Request date to paid date</div>
+          </div>
+          <div className="card">
+            <h3>Best Trade</h3>
+            <div className={`value ${bestTrade && bestTrade.netPnl >= 0 ? 'pnl-positive' : ''}`}>
+              {bestTrade ? formatCurrency(bestTrade.netPnl) : '$0.00'}
+            </div>
+            <div className="sub">
+              {bestTrade
+                ? `${bestTrade.instrument} · ${bestTrade.side} · Qty ${bestTrade.quantity}`
+                : 'No trades in the selected range'}
+            </div>
+            {bestTrade ? (
+              <div className="sub">
+                {formatDateTime(bestTrade.entryTime)} to {formatDateTime(bestTrade.exitTime)} · {directionWinRate(bestTrade.side).toFixed(1)}% {bestTrade.side.toLowerCase()} win rate
+              </div>
+            ) : null}
+          </div>
+          <div className="card">
+            <h3>Worst Trade</h3>
+            <div className={`value ${worstTrade && worstTrade.netPnl < 0 ? 'pnl-negative' : ''}`}>
+              {worstTrade ? formatCurrency(worstTrade.netPnl) : '$0.00'}
+            </div>
+            <div className="sub">
+              {worstTrade
+                ? `${worstTrade.instrument} · ${worstTrade.side} · Qty ${worstTrade.quantity}`
+                : 'No trades in the selected range'}
+            </div>
+            {worstTrade ? (
+              <div className="sub">
+                {formatDateTime(worstTrade.entryTime)} to {formatDateTime(worstTrade.exitTime)} · {directionWinRate(worstTrade.side).toFixed(1)}% {worstTrade.side.toLowerCase()} win rate
+              </div>
+            ) : null}
           </div>
         </div>
 
