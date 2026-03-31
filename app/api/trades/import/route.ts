@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
   const defaultTags = Array.isArray(body?.defaultTags)
     ? body.defaultTags.map((tag: unknown) => String(tag).trim()).filter(Boolean)
     : [];
-  const timeZone = typeof body?.timeZone === 'string' && body.timeZone.trim() ? body.timeZone : 'America/Chicago';
+  const timeZone = 'America/New_York';
 
   if (sources.length === 0) {
     return NextResponse.json({ error: 'No CSV sources were provided.' }, { status: 400 });
