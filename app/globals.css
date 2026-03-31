@@ -344,6 +344,22 @@ textarea {
   color: var(--ink);
 }
 
+.dashboard-filter-bar {
+  display: grid;
+  gap: 10px;
+  min-width: min(100%, 320px);
+}
+
+.dashboard-range-select {
+  min-width: 220px;
+}
+
+.dashboard-date-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .accent-card {
   background:
     radial-gradient(circle at top right, rgba(42, 208, 127, 0.18), transparent 35%),
@@ -835,6 +851,7 @@ textarea {
     grid-template-columns: 1fr;
   }
   .dashboard-grid,
+  .dashboard-date-row,
   .claims-grid,
   .calendar-board-header,
   .calendar-week-row,

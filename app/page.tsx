@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import BarChart from '../components/BarChart';
 import LineChart from '../components/LineChart';
 import Sidebar from '../components/Sidebar';
@@ -9,17 +9,14 @@ import {
   averageLosingTrade,
   averageWinningTrade,
   buildCalendarMonth,
-  buildDateSeries,
   calculateDailyPnl,
   compareSides,
   cumulativeSeries,
   expectancy,
-  filterTradesByDays,
   formatMonthLabel,
   largestLoss,
   largestWin,
   profitFactor,
-  rollingAverageDaily,
   totalPnl,
   winRate
 } from '../lib/metrics';
@@ -32,20 +29,98 @@ const formatDays = (value: number) => `${value.toFixed(1)} days`;
 
 const formatMinutes = (value: number) => `${value.toFixed(1)} min`;
 const normalizeAccountKey = (value: string) => value.replace(/\D/g, '').slice(-2);
+const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+const addDays = (date: Date, days: number) => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+};
+const toDateInputValue = (date: Date) => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+const parseDateInputValue = (value: string) => {
+  if (!value) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+};
 const payoutRequestTradingDaySeed: Record<string, number> = {
   '05': 19
 };
 
-export default function DashboardPage() {
-  const [range, setRange] = useState<30 | 60 | 90>(30);
-  const { trades, payouts, loading, error } = useTradingData();
+type RangePreset = '30d' | '60d' | 'ytd' | 'month' | 'week' | 'quarter' | 'custom';
 
-  const daily = calculateDailyPnl(trades);
-  const filteredTrades = filterTradesByDays(trades, range);
-  const filteredDaily = buildDateSeries(calculateDailyPnl(filteredTrades), range);
+export default function DashboardPage() {
+  const [rangePreset, setRangePreset] = useState<RangePreset>('30d');
+  const { trades, payouts, loading, error } = useTradingData();
+  const today = startOfDay(new Date());
+  const earliestTradeDate = useMemo(() => {
+    if (trades.length === 0) {
+      return today;
+    }
+    return trades.reduce((earliest, trade) => {
+      const exit = startOfDay(trade.exitTime);
+      return exit < earliest ? exit : earliest;
+    }, startOfDay(trades[0].exitTime));
+  }, [today, trades]);
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+
+  const rangeConfig = useMemo(() => {
+    const end = today;
+    if (rangePreset === '30d') {
+      return { start: addDays(end, -29), end, label: 'Last 30 Days', paceLabel: '30-day rolling calendar pace' };
+    }
+    if (rangePreset === '60d') {
+      return { start: addDays(end, -59), end, label: 'Last 60 Days', paceLabel: '60-day rolling calendar pace' };
+    }
+    if (rangePreset === 'ytd') {
+      return { start: new Date(end.getFullYear(), 0, 1), end, label: 'Year To Date', paceLabel: 'YTD calendar pace' };
+    }
+    if (rangePreset === 'month') {
+      return { start: new Date(end.getFullYear(), end.getMonth(), 1), end, label: 'This Month', paceLabel: 'This month calendar pace' };
+    }
+    if (rangePreset === 'week') {
+      return { start: addDays(end, -end.getDay()), end, label: 'This Week', paceLabel: 'This week calendar pace' };
+    }
+    if (rangePreset === 'quarter') {
+      const quarterStartMonth = Math.floor(end.getMonth() / 3) * 3;
+      return { start: new Date(end.getFullYear(), quarterStartMonth, 1), end, label: 'This Quarter', paceLabel: 'This quarter calendar pace' };
+    }
+
+    const parsedStart = parseDateInputValue(customStartDate) ?? earliestTradeDate;
+    const parsedEnd = parseDateInputValue(customEndDate) ?? end;
+    const safeStart = parsedStart <= parsedEnd ? parsedStart : parsedEnd;
+    const safeEnd = parsedEnd >= parsedStart ? parsedEnd : parsedStart;
+    return { start: safeStart, end: safeEnd, label: 'Custom Range', paceLabel: 'Custom calendar pace' };
+  }, [customEndDate, customStartDate, earliestTradeDate, rangePreset, today]);
+
+  const filteredTrades = useMemo(() => {
+    return trades.filter((trade) => {
+      const exit = startOfDay(trade.exitTime);
+      return exit >= rangeConfig.start && exit <= rangeConfig.end;
+    });
+  }, [rangeConfig.end, rangeConfig.start, trades]);
+  const filteredDaily = useMemo(() => {
+    const filteredMap = new Map(calculateDailyPnl(filteredTrades).map((item) => [item.date, item]));
+    const series = [];
+    for (let current = rangeConfig.start; current <= rangeConfig.end; current = addDays(current, 1)) {
+      const key = toDateInputValue(current);
+      series.push(filteredMap.get(key) ?? { date: key, netPnl: 0, trades: 0 });
+    }
+    return series;
+  }, [filteredTrades, rangeConfig.end, rangeConfig.start]);
   const cumulative = cumulativeSeries(filteredDaily);
   const sideCompare = compareSides(filteredTrades);
   const currentMonth = buildCalendarMonth(trades, new Date());
+  const rangeDays = Math.max(
+    1,
+    Math.floor((rangeConfig.end.getTime() - rangeConfig.start.getTime()) / 86400000) + 1
+  );
+  const averageDailyProfit = totalPnl(filteredTrades) / rangeDays;
 
   const payoutCycleAvg = (() => {
     if (payouts.length < 2) return 0;
@@ -107,26 +182,35 @@ export default function DashboardPage() {
             <div className="h1">Dashboard</div>
             <div className="hero-subtitle">Your payout factory at a glance: equity curve, daily pace, and payout velocity.</div>
           </div>
-          <div className="range-toggle">
-            {[30, 60, 90].map((value) => (
-              <button
-                key={value}
-                className={range === value ? 'active' : ''}
-                onClick={() => setRange(value as 30 | 60 | 90)}
-              >
-                {value} Days
-              </button>
-            ))}
+          <div className="dashboard-filter-bar">
+            <select className="select dashboard-range-select" value={rangePreset} onChange={(event) => setRangePreset(event.target.value as RangePreset)}>
+              <option value="30d">30 Days</option>
+              <option value="60d">60 Days</option>
+              <option value="ytd">YTD</option>
+              <option value="month">This Month</option>
+              <option value="week">This Week</option>
+              <option value="quarter">This Quarter</option>
+              <option value="custom">Start / Finish Date</option>
+            </select>
+            {rangePreset === 'custom' ? (
+              <div className="dashboard-date-row">
+                <input className="input" type="date" value={customStartDate} onChange={(event) => setCustomStartDate(event.target.value)} />
+                <input className="input" type="date" value={customEndDate} onChange={(event) => setCustomEndDate(event.target.value)} />
+              </div>
+            ) : null}
           </div>
         </div>
 
         {error ? <div className="callout danger-callout">{error}</div> : null}
+        <div className="sub" style={{ marginBottom: '16px' }}>
+          Showing {rangeConfig.label}: {formatMonthLabel(rangeConfig.start)} {rangeConfig.start.getDate()} through {formatMonthLabel(rangeConfig.end)} {rangeConfig.end.getDate()}.
+        </div>
 
         <div className="kpi-grid">
           <div className="card accent-card">
             <h3>Average Daily Profit</h3>
-            <div className="value">{formatCurrency(rollingAverageDaily(daily, range))}</div>
-            <div className="sub">{range}-day rolling calendar pace</div>
+            <div className="value">{formatCurrency(averageDailyProfit)}</div>
+            <div className="sub">{rangeConfig.paceLabel}</div>
           </div>
           <div className="card">
             <h3>Total Net P&amp;L</h3>
@@ -159,7 +243,7 @@ export default function DashboardPage() {
           <section className="card feature-card">
             <div className="section-header">
               <div className="section-title">Cumulative P&amp;L</div>
-              <div className="sub">{range}-day equity curve</div>
+              <div className="sub">{rangeConfig.label} equity curve</div>
             </div>
             <LineChart
               data={cumulative.map((item) => ({ label: item.date.slice(5), value: item.value }))}
