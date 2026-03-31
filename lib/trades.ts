@@ -28,11 +28,16 @@ type OpenLot = {
   instrument: string;
   account: string;
   side: 'Long' | 'Short';
-  quantity: number;
+  remainingQuantity: number;
+  originalQuantity: number;
   price: number;
   time: Date;
   commissionPerUnit: number;
   sourceFile: string;
+  realizedGrossPnl: number;
+  realizedCommission: number;
+  weightedExitPriceTotal: number;
+  lastExitTime: Date | null;
 };
 
 export const matchTrades = (rows: CsvRow[], sourceFile: string): Trade[] => {
@@ -51,11 +56,16 @@ export const matchTrades = (rows: CsvRow[], sourceFile: string): Trade[] => {
         instrument: row.instrument,
         account: row.account,
         side,
-        quantity: row.quantity,
+        remainingQuantity: row.quantity,
+        originalQuantity: row.quantity,
         price: row.price,
         time: row.time,
         commissionPerUnit,
-        sourceFile
+        sourceFile,
+        realizedGrossPnl: 0,
+        realizedCommission: 0,
+        weightedExitPriceTotal: 0,
+        lastExitTime: null
       });
       continue;
     }
@@ -71,33 +81,39 @@ export const matchTrades = (rows: CsvRow[], sourceFile: string): Trade[] => {
         continue;
       }
 
-      const matchedQty = Math.min(lot.quantity, remaining);
+      const matchedQty = Math.min(lot.remainingQuantity, remaining);
       const direction = lot.side === 'Long' ? 1 : -1;
       const pointValue = pointValueFor(row.instrument);
       const grossPnl = (row.price - lot.price) * direction * matchedQty * pointValue;
       const commission = (lot.commissionPerUnit + commissionPerUnit) * matchedQty;
-      const netPnl = grossPnl - commission;
-
-      trades.push({
-        account: row.account,
-        instrument: row.instrument,
-        side: lot.side,
-        quantity: matchedQty,
-        entryTime: lot.time,
-        exitTime: row.time,
-        entryPrice: lot.price,
-        exitPrice: row.price,
-        grossPnl,
-        commission,
-        netPnl,
-        tags: [],
-        note: null,
-        sourceFile
-      });
-
-      lot.quantity -= matchedQty;
+      lot.realizedGrossPnl += grossPnl;
+      lot.realizedCommission += commission;
+      lot.weightedExitPriceTotal += row.price * matchedQty;
+      lot.lastExitTime = row.time;
+      lot.remainingQuantity -= matchedQty;
       remaining -= matchedQty;
-      if (lot.quantity === 0) {
+
+      if (lot.remainingQuantity === 0) {
+        const avgExitPrice = lot.weightedExitPriceTotal / lot.originalQuantity;
+        const netPnl = lot.realizedGrossPnl - lot.realizedCommission;
+
+        trades.push({
+          account: row.account,
+          instrument: row.instrument,
+          side: lot.side,
+          quantity: lot.originalQuantity,
+          entryTime: lot.time,
+          exitTime: lot.lastExitTime ?? row.time,
+          entryPrice: lot.price,
+          exitPrice: avgExitPrice,
+          grossPnl: lot.realizedGrossPnl,
+          commission: lot.realizedCommission,
+          netPnl,
+          tags: [],
+          note: null,
+          sourceFile
+        });
+
         openLots.splice(i, 1);
         i -= 1;
       }
@@ -108,8 +124,16 @@ export const matchTrades = (rows: CsvRow[], sourceFile: string): Trade[] => {
   // with otherwise identical timestamps, prices, qty, and P&L. We stamp a
   // deterministic occurrence index so re-imports stay stable without collapsing
   // those real duplicates into one fingerprint.
+  const orderedTrades = trades
+    .slice()
+    .sort(
+      (left, right) =>
+        left.exitTime.getTime() - right.exitTime.getTime() ||
+        left.entryTime.getTime() - right.entryTime.getTime()
+    );
+
   const occurrenceCounts = new Map<string, number>();
-  for (const trade of trades) {
+  for (const trade of orderedTrades) {
     const baseKey = [
       trade.account,
       trade.instrument,
@@ -129,7 +153,7 @@ export const matchTrades = (rows: CsvRow[], sourceFile: string): Trade[] => {
     trade.fingerprintOrdinal = nextOrdinal;
   }
 
-  return trades;
+  return orderedTrades;
 };
 
 export const summarizeUnmatched = (rows: CsvRow[], trades: Trade[]) => {

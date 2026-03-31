@@ -182,6 +182,7 @@ function TradesPageContent() {
           <div className="trade-list">
             {bundledTradeList.map((bundle) => {
                 const trade = bundle.representative;
+                const uniqueAccounts = Array.from(new Set(bundle.accounts)).sort((left, right) => left.localeCompare(right));
                 const draft = drafts[bundle.key] ?? {
                   tags: trade.tags.join(', '),
                   note: trade.note ?? ''
@@ -196,7 +197,7 @@ function TradesPageContent() {
                           checked={Boolean(selectedBundles[bundle.key])}
                           onChange={() => toggleBundle(bundle.key)}
                         />
-                        <strong>{trade.instrument}</strong> · {trade.side} · {bundle.trades.length} account{bundle.trades.length === 1 ? '' : 's'}
+                        <strong>{trade.instrument}</strong> · {trade.side} · {uniqueAccounts.length} account{uniqueAccounts.length === 1 ? '' : 's'}
                       </div>
                       <div className={bundle.totalNetPnl >= 0 ? 'pnl-positive' : 'pnl-negative'}>
                         {formatCurrency(bundle.totalNetPnl)}
@@ -206,7 +207,7 @@ function TradesPageContent() {
                       {formatDateTime(trade.entryTime)} to {formatDateTime(trade.exitTime)} · Qty {trade.quantity} per account · Total Contracts {bundle.totalContracts}
                     </div>
                     <div className="sub" style={{ marginTop: '6px' }}>
-                      Accounts: {bundle.accounts.sort((left, right) => left.localeCompare(right)).join(', ')}
+                      Accounts: {uniqueAccounts.length} linked account{uniqueAccounts.length === 1 ? '' : 's'}
                     </div>
                     <div className="form-row" style={{ marginTop: '12px' }}>
                       <input

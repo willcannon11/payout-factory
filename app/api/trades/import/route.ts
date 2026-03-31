@@ -14,6 +14,7 @@ export async function POST(request: NextRequest) {
   const defaultTags = Array.isArray(body?.defaultTags)
     ? body.defaultTags.map((tag: unknown) => String(tag).trim()).filter(Boolean)
     : [];
+  const timeZone = typeof body?.timeZone === 'string' && body.timeZone.trim() ? body.timeZone : 'America/Chicago';
 
   if (sources.length === 0) {
     return NextResponse.json({ error: 'No CSV sources were provided.' }, { status: 400 });
@@ -27,7 +28,7 @@ export async function POST(request: NextRequest) {
   for (const source of sources) {
     const name = String(source?.name ?? 'uploaded-trades.csv');
     const text = String(source?.text ?? '');
-    const rows = parseNinjaCsv(text);
+    const rows = parseNinjaCsv(text, timeZone);
     const trades = matchTrades(rows, name);
     totalTrades += trades.length;
     attemptedTrades += trades.length;

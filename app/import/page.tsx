@@ -22,6 +22,7 @@ export default function ImportPage() {
     if (sources.length === 0) return;
     setSummary(null);
     setStatus('Uploading and matching trades...');
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago';
 
     const response = await fetch('/api/trades/import', {
       method: 'POST',
@@ -30,7 +31,8 @@ export default function ImportPage() {
       },
       body: JSON.stringify({
         sources,
-        defaultTags: parsedDefaultTags
+        defaultTags: parsedDefaultTags,
+        timeZone
       })
     });
 

@@ -27,7 +27,11 @@ export const groupCopiedTrades = (trades: Trade[]) => {
   const bundles: TradeBundle[] = [];
   const sortedTrades = trades
     .slice()
-    .sort((left, right) => right.exitTime.getTime() - left.exitTime.getTime());
+    .sort(
+      (left, right) =>
+        left.exitTime.getTime() - right.exitTime.getTime() ||
+        left.entryTime.getTime() - right.entryTime.getTime()
+    );
 
   for (const trade of sortedTrades) {
     const existing = bundles.find((bundle) => bundle.trades.some((candidate) => isSameCopiedTrade(candidate, trade)));
