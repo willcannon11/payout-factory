@@ -67,6 +67,8 @@ const normalizeTradeTag = (tag: string) => {
   return tag.trim();
 };
 
+const PRIMARY_TRADE_TAGS = new Set(['FibRectangle', 'Mod Continuation 2', 'PDL Ceiling']);
+
 export default function DashboardPage() {
   const [rangePreset, setRangePreset] = useState<RangePreset>('30d');
   const { trades, payouts, loading, error } = useTradingData();
@@ -145,7 +147,13 @@ export default function DashboardPage() {
     >();
 
     for (const trade of filteredTrades) {
-      const normalizedTags = Array.from(new Set(trade.tags.map(normalizeTradeTag).filter(Boolean)));
+      const normalizedTags = Array.from(
+        new Set(
+          trade.tags
+            .map(normalizeTradeTag)
+            .filter((tag) => PRIMARY_TRADE_TAGS.has(tag))
+        )
+      );
       for (const tag of normalizedTags) {
         const existing = tagMap.get(tag) ?? { tag, trades: [] };
         existing.trades.push(trade);
