@@ -17,9 +17,15 @@ type ThresholdAnalysis = {
   finishedAboveTarget: number;
   finishedBelowTarget: number;
   finishedRed: number;
-  avgCloseAfterTrigger: number;
-  avgGiveback: number;
-  retainedPct: number;
+  avgEndOfDayPnl: number;
+  avgPullbackFromTrigger: number;
+  keptPctOfTrigger: number;
+  dayOutcomes: Array<{
+    day: string;
+    triggerValue: number;
+    finalValue: number;
+    outcome: 'above_target' | 'below_target' | 'red';
+  }>;
 };
 
 type CloseEarlyAnalysis = {
@@ -31,20 +37,24 @@ type CloseEarlyAnalysis = {
   netConsequence: number;
 };
 
-const analyzeThresholds = (trades: ReturnType<typeof useTradingData>['trades']): ThresholdAnalysis[] => {
-  const bundles = groupCopiedTrades(trades)
-    .map((bundle) => ({
-      exitTime: bundle.representative.exitTime,
-      netPnl: bundle.representative.netPnl
-    }))
-    .sort((left, right) => left.exitTime.getTime() - right.exitTime.getTime());
+const tradeDayKey = (date: Date, timeZone = 'America/New_York') => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
 
-  const bundlesByDay = new Map<string, typeof bundles>();
-  for (const bundle of bundles) {
-    const key = bundle.exitTime.toISOString().slice(0, 10);
-    const existing = bundlesByDay.get(key) ?? [];
-    existing.push(bundle);
-    bundlesByDay.set(key, existing);
+const analyzeThresholds = (trades: ReturnType<typeof useTradingData>['trades']): ThresholdAnalysis[] => {
+  const tradesByDay = new Map<string, typeof trades>();
+  for (const trade of trades) {
+    const key = tradeDayKey(trade.exitTime);
+    const existing = tradesByDay.get(key) ?? [];
+    existing.push(trade);
+    tradesByDay.set(key, existing);
   }
 
   return thresholds.map((threshold) => {
@@ -52,37 +62,68 @@ const analyzeThresholds = (trades: ReturnType<typeof useTradingData>['trades']):
     let finishedAboveTarget = 0;
     let finishedBelowTarget = 0;
     let finishedRed = 0;
-    let totalCloseAfterTrigger = 0;
-    let totalGiveback = 0;
+    let totalEndOfDayPnl = 0;
+    let totalPullbackFromTrigger = 0;
     let totalRetention = 0;
+    const dayOutcomes: ThresholdAnalysis['dayOutcomes'] = [];
 
-    for (const dayBundles of bundlesByDay.values()) {
-      let running = 0;
+    for (const [day, dayTrades] of tradesByDay.entries()) {
+      const accounts = Array.from(new Set(dayTrades.map((trade) => trade.account))).sort((left, right) => left.localeCompare(right));
+      if (accounts.length === 0) {
+        continue;
+      }
+
+      const runningByAccount = new Map(accounts.map((account) => [account, 0]));
+      const eventDeltas = new Map<number, Map<string, number>>();
+      for (const trade of dayTrades) {
+        const time = trade.exitTime.getTime();
+        const existingAtTime = eventDeltas.get(time) ?? new Map<string, number>();
+        existingAtTime.set(trade.account, (existingAtTime.get(trade.account) ?? 0) + trade.netPnl);
+        eventDeltas.set(time, existingAtTime);
+      }
+
+      const orderedTimes = Array.from(eventDeltas.keys()).sort((left, right) => left - right);
       let reached = false;
       let triggerValue = 0;
+      let averageRunning = 0;
 
-      for (const bundle of dayBundles) {
-        running += bundle.netPnl;
-        if (!reached && running >= threshold) {
+      for (const time of orderedTimes) {
+        const deltas = eventDeltas.get(time);
+        if (!deltas) {
+          continue;
+        }
+
+        for (const [account, delta] of deltas.entries()) {
+          runningByAccount.set(account, (runningByAccount.get(account) ?? 0) + delta);
+        }
+
+        averageRunning =
+          Array.from(runningByAccount.values()).reduce((sum, value) => sum + value, 0) / accounts.length;
+
+        if (!reached && averageRunning >= threshold) {
           reached = true;
-          triggerValue = running;
+          triggerValue = averageRunning;
         }
       }
 
       if (!reached) continue;
 
-      const finalValue = running;
+      const finalValue =
+        Array.from(runningByAccount.values()).reduce((sum, value) => sum + value, 0) / accounts.length;
       daysReached += 1;
-      totalCloseAfterTrigger += finalValue;
-      totalGiveback += Math.max(triggerValue - finalValue, 0);
+      totalEndOfDayPnl += finalValue;
+      totalPullbackFromTrigger += Math.max(triggerValue - finalValue, 0);
       totalRetention += triggerValue === 0 ? 0 : Math.max(Math.min(finalValue / triggerValue, 1), -1);
 
       if (finalValue >= threshold) {
         finishedAboveTarget += 1;
+        dayOutcomes.push({ day, triggerValue, finalValue, outcome: 'above_target' });
       } else if (finalValue >= 0) {
         finishedBelowTarget += 1;
+        dayOutcomes.push({ day, triggerValue, finalValue, outcome: 'below_target' });
       } else {
         finishedRed += 1;
+        dayOutcomes.push({ day, triggerValue, finalValue, outcome: 'red' });
       }
     }
 
@@ -92,9 +133,10 @@ const analyzeThresholds = (trades: ReturnType<typeof useTradingData>['trades']):
       finishedAboveTarget,
       finishedBelowTarget,
       finishedRed,
-      avgCloseAfterTrigger: daysReached ? totalCloseAfterTrigger / daysReached : 0,
-      avgGiveback: daysReached ? totalGiveback / daysReached : 0,
-      retainedPct: daysReached ? (totalRetention / daysReached) * 100 : 0
+      avgEndOfDayPnl: daysReached ? totalEndOfDayPnl / daysReached : 0,
+      avgPullbackFromTrigger: daysReached ? totalPullbackFromTrigger / daysReached : 0,
+      keptPctOfTrigger: daysReached ? (totalRetention / daysReached) * 100 : 0,
+      dayOutcomes
     };
   });
 };
@@ -149,15 +191,16 @@ const buildApprenticeContext = (
   focus: 'Per-account daily target coaching. All threshold results are computed using representative per-account P&L, not bundled all-account totals.',
   suggestedDailyTargetPerAccount: recommended
     ? {
-        threshold: recommended.threshold,
-        daysReached: recommended.daysReached,
-        finishedAboveTarget: recommended.finishedAboveTarget,
-        finishedBelowTarget: recommended.finishedBelowTarget,
-        finishedRed: recommended.finishedRed,
-        avgCloseAfterTrigger: Number(recommended.avgCloseAfterTrigger.toFixed(2)),
-        avgGiveback: Number(recommended.avgGiveback.toFixed(2)),
-        retainedPct: Number(recommended.retainedPct.toFixed(1))
-      }
+      threshold: recommended.threshold,
+      daysReached: recommended.daysReached,
+      finishedAboveTarget: recommended.finishedAboveTarget,
+      finishedBelowTarget: recommended.finishedBelowTarget,
+      finishedRed: recommended.finishedRed,
+      avgEndOfDayPnl: Number(recommended.avgEndOfDayPnl.toFixed(2)),
+      avgPullbackFromTrigger: Number(recommended.avgPullbackFromTrigger.toFixed(2)),
+      keptPctOfTrigger: Number(recommended.keptPctOfTrigger.toFixed(1)),
+      dayOutcomes: recommended.dayOutcomes
+    }
     : null,
   thresholdTable: analyses.map((item) => ({
     threshold: item.threshold,
@@ -165,9 +208,10 @@ const buildApprenticeContext = (
     finishedAboveTarget: item.finishedAboveTarget,
     finishedBelowTarget: item.finishedBelowTarget,
     finishedRed: item.finishedRed,
-    avgCloseAfterTrigger: Number(item.avgCloseAfterTrigger.toFixed(2)),
-    avgGiveback: Number(item.avgGiveback.toFixed(2)),
-    retainedPct: Number(item.retainedPct.toFixed(1))
+    avgEndOfDayPnl: Number(item.avgEndOfDayPnl.toFixed(2)),
+    avgPullbackFromTrigger: Number(item.avgPullbackFromTrigger.toFixed(2)),
+    keptPctOfTrigger: Number(item.keptPctOfTrigger.toFixed(1)),
+    dayOutcomes: item.dayOutcomes
   })),
   closeEarlyReview: {
     reviewedTrades: closeEarly.reviewedTrades,
@@ -188,10 +232,10 @@ export default function AiApprenticePage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const recommended = analyses
-    .filter((item) => item.retainedPct > 60)
+    .filter((item) => item.keptPctOfTrigger > 60)
     .sort((left, right) => {
       if (right.daysReached !== left.daysReached) return right.daysReached - left.daysReached;
-      return right.retainedPct - left.retainedPct;
+      return right.keptPctOfTrigger - left.keptPctOfTrigger;
     })[0] ?? analyses[0] ?? null;
   const chatContext = useMemo(
     () => buildApprenticeContext(analyses, recommended, closeEarly),
@@ -271,8 +315,8 @@ export default function AiApprenticePage() {
           </div>
           <div className="card">
             <h3>Average Giveback - Per Account</h3>
-            <div className="value">{recommended ? formatCurrency(recommended.avgGiveback) : '$0.00'}</div>
-            <div className="sub">How much one account gives back after the suggested target is first touched.</div>
+            <div className="value">{recommended ? formatCurrency(recommended.avgPullbackFromTrigger) : '$0.00'}</div>
+            <div className="sub">Average pullback per account from the first time you crossed the target to the end of the day.</div>
           </div>
           <div className="card">
             <h3>Missed Profit From Closing Early</h3>
@@ -310,41 +354,74 @@ export default function AiApprenticePage() {
         <section className="card">
           <div className="section-header">
             <div className="section-title">Daily Target Explorer</div>
-            <div className="sub">First-pass coaching logic based on per-account daily P&amp;L, using one representative trade path instead of the full copied-account stack.</div>
+            <div className="sub">Computed from timestamped imported trades using the average running P&amp;L per account for each day, not the full 15-account total.</div>
           </div>
           {loading ? (
             <div className="summary-panel">Crunching your trade history...</div>
           ) : analyses.length === 0 ? (
             <div className="summary-panel">No threshold suggestions yet. Import more trading history and we’ll start pattern matching.</div>
           ) : (
-            <table className="table apprentice-table">
-              <thead>
-                <tr>
-                  <th>Target Per Account</th>
-                  <th>Days Reached</th>
-                  <th>Finished Above Target</th>
-                  <th>Finished Below Target</th>
-                  <th>Finished Red</th>
-                  <th>Avg Close After Trigger</th>
-                  <th>Avg Giveback</th>
-                  <th>Retention</th>
-                </tr>
-              </thead>
-              <tbody>
-                {analyses.map((item) => (
-                  <tr key={item.threshold}>
-                    <td>{formatCurrency(item.threshold)}</td>
-                    <td>{item.daysReached}</td>
-                    <td>{item.finishedAboveTarget}</td>
-                    <td>{item.finishedBelowTarget}</td>
-                    <td>{item.finishedRed}</td>
-                    <td>{formatCurrency(item.avgCloseAfterTrigger)}</td>
-                    <td>{formatCurrency(item.avgGiveback)}</td>
-                    <td>{item.retainedPct.toFixed(0)}%</td>
+            <>
+              <div className="summary-panel" style={{ marginBottom: '16px' }}>
+                `Average End Of Day P&L` is the average per-account finish on days where that target was hit.
+                {' '}`Average Pullback` is how much per account you gave back from the first cross above the target to the close.
+                {' '}`Kept %` is the share of that first trigger value you still had by day end.
+              </div>
+              <div style={{ display: 'grid', gap: '14px', marginBottom: '16px' }}>
+                {analyses.map((item) => {
+                  const abovePct = item.daysReached ? (item.finishedAboveTarget / item.daysReached) * 100 : 0;
+                  const belowPct = item.daysReached ? (item.finishedBelowTarget / item.daysReached) * 100 : 0;
+                  const redPct = item.daysReached ? (item.finishedRed / item.daysReached) * 100 : 0;
+
+                  return (
+                    <div key={`chart-${item.threshold}`}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                        <strong>{formatCurrency(item.threshold)} per account</strong>
+                        <div className="sub">{item.daysReached} days reached</div>
+                      </div>
+                      <div style={{ display: 'flex', width: '100%', minHeight: '16px', borderRadius: '999px', overflow: 'hidden', border: '1px solid rgba(140, 160, 200, 0.16)', background: 'rgba(255,255,255,0.03)' }}>
+                        <div style={{ width: `${abovePct}%`, background: 'rgba(42, 208, 127, 0.75)' }} />
+                        <div style={{ width: `${belowPct}%`, background: 'rgba(245, 158, 11, 0.75)' }} />
+                        <div style={{ width: `${redPct}%`, background: 'rgba(240, 82, 82, 0.75)' }} />
+                      </div>
+                      <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '8px' }} className="sub">
+                        <span>Above target: {item.finishedAboveTarget}</span>
+                        <span>Below target but green: {item.finishedBelowTarget}</span>
+                        <span>Red: {item.finishedRed}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <table className="table apprentice-table">
+                <thead>
+                  <tr>
+                    <th>Target Per Account</th>
+                    <th>Days Reached</th>
+                    <th>Finished Above Target</th>
+                    <th>Finished Below Target</th>
+                    <th>Finished Red</th>
+                    <th>Avg End Of Day P&amp;L</th>
+                    <th>Avg Pullback</th>
+                    <th>Kept %</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {analyses.map((item) => (
+                    <tr key={item.threshold}>
+                      <td>{formatCurrency(item.threshold)}</td>
+                      <td>{item.daysReached}</td>
+                      <td>{item.finishedAboveTarget}</td>
+                      <td>{item.finishedBelowTarget}</td>
+                      <td>{item.finishedRed}</td>
+                      <td>{formatCurrency(item.avgEndOfDayPnl)}</td>
+                      <td>{formatCurrency(item.avgPullbackFromTrigger)}</td>
+                      <td>{item.keptPctOfTrigger.toFixed(0)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
           )}
         </section>
 
