@@ -55,6 +55,9 @@ type StopTargetBacktest = {
   avgRealized: number;
   avgActualFinal: number;
   avgDelta: number;
+  avgRealizedOnReachedDays: number;
+  avgActualFinalOnReachedDays: number;
+  avgDeltaOnReachedDays: number;
   betterThanActualDays: number;
   worseThanActualDays: number;
   unchangedDays: number;
@@ -180,6 +183,9 @@ const backtestStopTargets = (accountDays: AccountDayPath[]) => {
     let worseThanActualDays = 0;
     let unchangedDays = 0;
     let totalDelta = 0;
+    let totalRealizedOnReachedDays = 0;
+    let totalActualFinalOnReachedDays = 0;
+    let totalDeltaOnReachedDays = 0;
 
     for (const accountDay of accountDays) {
       const hit = accountDay.path.find((point) => point.running >= threshold);
@@ -187,6 +193,9 @@ const backtestStopTargets = (accountDays: AccountDayPath[]) => {
 
       if (hit) {
         reachedDays += 1;
+        totalRealizedOnReachedDays += realized;
+        totalActualFinalOnReachedDays += accountDay.final;
+        totalDeltaOnReachedDays += realized - accountDay.final;
       }
 
       totalRealized += realized;
@@ -211,6 +220,9 @@ const backtestStopTargets = (accountDays: AccountDayPath[]) => {
       avgRealized: accountDays.length ? totalRealized / accountDays.length : 0,
       avgActualFinal: accountDays.length ? totalActualFinal / accountDays.length : 0,
       avgDelta: accountDays.length ? totalDelta / accountDays.length : 0,
+      avgRealizedOnReachedDays: reachedDays ? totalRealizedOnReachedDays / reachedDays : 0,
+      avgActualFinalOnReachedDays: reachedDays ? totalActualFinalOnReachedDays / reachedDays : 0,
+      avgDeltaOnReachedDays: reachedDays ? totalDeltaOnReachedDays / reachedDays : 0,
       betterThanActualDays,
       worseThanActualDays,
       unchangedDays
@@ -304,6 +316,9 @@ const buildApprenticeContext = (
       avgRealized: Number(stopBacktest.recommended.avgRealized.toFixed(2)),
       avgActualFinal: Number(stopBacktest.recommended.avgActualFinal.toFixed(2)),
       avgDelta: Number(stopBacktest.recommended.avgDelta.toFixed(2)),
+      avgRealizedOnReachedDays: Number(stopBacktest.recommended.avgRealizedOnReachedDays.toFixed(2)),
+      avgActualFinalOnReachedDays: Number(stopBacktest.recommended.avgActualFinalOnReachedDays.toFixed(2)),
+      avgDeltaOnReachedDays: Number(stopBacktest.recommended.avgDeltaOnReachedDays.toFixed(2)),
       reachedDays: stopBacktest.recommended.reachedDays,
       reachedPct: Number((stopBacktest.recommended.reachedPct * 100).toFixed(1)),
       betterThanActualDays: stopBacktest.recommended.betterThanActualDays,
@@ -312,6 +327,9 @@ const buildApprenticeContext = (
       nearby: stopBacktest.nearby.map((item) => ({
         threshold: item.threshold,
         avgRealized: Number(item.avgRealized.toFixed(2)),
+        avgRealizedOnReachedDays: Number(item.avgRealizedOnReachedDays.toFixed(2)),
+        avgActualFinalOnReachedDays: Number(item.avgActualFinalOnReachedDays.toFixed(2)),
+        avgDeltaOnReachedDays: Number(item.avgDeltaOnReachedDays.toFixed(2)),
         avgDelta: Number(item.avgDelta.toFixed(2)),
         reachedDays: item.reachedDays
       }))
@@ -434,16 +452,21 @@ export default function AiApprenticePage() {
             </div>
           </div>
           <div className="card">
-            <h3>Avg Realized If Stopped</h3>
-            <div className="value">{stopBacktest.recommended ? formatCurrency(stopBacktest.recommended.avgRealized) : '$0.00'}</div>
-            <div className="sub">Average per-account result if you had stopped trading once that level was first reached.</div>
+            <h3>Avg Finish On Hit Days</h3>
+            <div className="value">{stopBacktest.recommended ? formatCurrency(stopBacktest.recommended.avgRealizedOnReachedDays) : '$0.00'}</div>
+            <div className="sub">Average realized per-account finish on the days where this target was actually reached and you stopped there.</div>
           </div>
           <div className="card">
-            <h3>Lift Vs Actual</h3>
-            <div className={`value ${(stopBacktest.recommended?.avgDelta ?? 0) >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>
-              {stopBacktest.recommended ? formatCurrency(stopBacktest.recommended.avgDelta) : '$0.00'}
+            <h3>Actual Finish On Hit Days</h3>
+            <div className="value">{stopBacktest.recommended ? formatCurrency(stopBacktest.recommended.avgActualFinalOnReachedDays) : '$0.00'}</div>
+            <div className="sub">What those same reached days actually finished at after you kept trading.</div>
+          </div>
+          <div className="card">
+            <h3>Lock-In Lift On Hit Days</h3>
+            <div className={`value ${(stopBacktest.recommended?.avgDeltaOnReachedDays ?? 0) >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>
+              {stopBacktest.recommended ? formatCurrency(stopBacktest.recommended.avgDeltaOnReachedDays) : '$0.00'}
             </div>
-            <div className="sub">Average per-account improvement versus what your imported data actually finished with.</div>
+            <div className="sub">Average extra realized per account on days that actually hit the target, compared with continuing to trade.</div>
           </div>
           <div className="card">
             <h3>Reach Rate</h3>
@@ -497,7 +520,7 @@ export default function AiApprenticePage() {
           ) : (
             <>
               <div className="summary-panel" style={{ marginBottom: '16px' }}>
-                {`Best backtested target right now is ${formatCurrency(stopBacktest.recommended.threshold)} per account. If you had stopped there, your average realized day would have been ${formatCurrency(stopBacktest.recommended.avgRealized)} per account, versus ${formatCurrency(stopBacktest.recommended.avgActualFinal)} from the actual imported outcomes.`}
+                {`Best backtested target right now is ${formatCurrency(stopBacktest.recommended.threshold)} per account. On the days where you actually hit that level, stopping there would have locked in an average realized finish of ${formatCurrency(stopBacktest.recommended.avgRealizedOnReachedDays)} per account, versus ${formatCurrency(stopBacktest.recommended.avgActualFinalOnReachedDays)} on those same days when you kept trading. Across all imported account-days, that rule would have moved your average from ${formatCurrency(stopBacktest.recommended.avgActualFinal)} to ${formatCurrency(stopBacktest.recommended.avgRealized)} per account-day.`}
               </div>
               <table className="table apprentice-table">
                 <thead>
@@ -505,9 +528,10 @@ export default function AiApprenticePage() {
                     <th>Target</th>
                     <th>Days Reached</th>
                     <th>Reach Rate</th>
-                    <th>Avg Realized If Stopped</th>
-                    <th>Avg Actual Finish</th>
-                    <th>Avg Lift Vs Actual</th>
+                    <th>Avg Finish On Hit Days</th>
+                    <th>Actual Finish On Hit Days</th>
+                    <th>Lock-In Lift On Hit Days</th>
+                    <th>Overall Avg Across All Days</th>
                     <th>Better Days</th>
                     <th>Worse Days</th>
                   </tr>
@@ -518,9 +542,10 @@ export default function AiApprenticePage() {
                       <td>{formatCurrency(item.threshold)}</td>
                       <td>{item.reachedDays}</td>
                       <td>{(item.reachedPct * 100).toFixed(0)}%</td>
+                      <td>{formatCurrency(item.avgRealizedOnReachedDays)}</td>
+                      <td>{formatCurrency(item.avgActualFinalOnReachedDays)}</td>
+                      <td className={item.avgDeltaOnReachedDays >= 0 ? 'pnl-positive' : 'pnl-negative'}>{formatCurrency(item.avgDeltaOnReachedDays)}</td>
                       <td>{formatCurrency(item.avgRealized)}</td>
-                      <td>{formatCurrency(item.avgActualFinal)}</td>
-                      <td className={item.avgDelta >= 0 ? 'pnl-positive' : 'pnl-negative'}>{formatCurrency(item.avgDelta)}</td>
                       <td>{item.betterThanActualDays}</td>
                       <td>{item.worseThanActualDays}</td>
                     </tr>

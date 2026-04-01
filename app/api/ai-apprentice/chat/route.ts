@@ -42,7 +42,8 @@ const buildTargetRecommendation = (context: Record<string, any>, question: strin
 
   return [
     `Based on your imported data, your best current daily profit target is ${formatCurrency(Number(backtest.threshold))} per account.`,
-    `That target produced the highest average realized result in the stop-rule backtest: ${formatCurrency(Number(backtest.avgRealized))} per account-day, versus ${formatCurrency(Number(backtest.avgActualFinal))} from the actual imported finishes, for a lift of ${formatCurrency(Number(backtest.avgDelta))}.`,
+    `On the days where you actually hit that target, stopping there would have locked in an average realized finish of ${formatCurrency(Number(backtest.avgRealizedOnReachedDays))} per account, versus ${formatCurrency(Number(backtest.avgActualFinalOnReachedDays))} on those same days when you kept trading, for a lift of ${formatCurrency(Number(backtest.avgDeltaOnReachedDays))}.`,
+    `Across all imported account-days, including days that never reached the target, the rule would have moved your average from ${formatCurrency(Number(backtest.avgActualFinal))} to ${formatCurrency(Number(backtest.avgRealized))} per account-day.`,
     `It was reached on ${Number(backtest.reachedDays)} of ${Number(backtest.totalAccountDays)} account-days (${Number(backtest.reachedPct).toFixed(1)}%).`,
     comparison ? `Closest tested comparisons: ${comparison}.` : '',
     'This recommendation comes from simulating “stop trading for the day the first time that profit target is reached,” not from the descriptive target table.'
