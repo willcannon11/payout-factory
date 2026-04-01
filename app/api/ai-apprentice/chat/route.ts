@@ -9,6 +9,9 @@ type ChatMessage = {
   content: string;
 };
 
+const buildTranscript = (messages: ChatMessage[]) =>
+  messages.map((message) => `${message.role === 'assistant' ? 'AI Apprentice' : 'User'}: ${message.content}`).join('\n\n');
+
 export async function POST(request: NextRequest) {
   try {
     const openAiKey = process.env.OPENAI_API_KEY;
@@ -36,6 +39,22 @@ export async function POST(request: NextRequest) {
     }
 
     const model = process.env.OPENAI_CHAT_MODEL || process.env.OPENAI_OCR_MODEL || 'gpt-4.1-mini';
+    const prompt = [
+      'You are AI Apprentice inside a trading journal app.',
+      'Answer only from the supplied page context and conversation transcript.',
+      'Be specific, numeric, and practical.',
+      'When recommending a target, compare the tested thresholds explicitly instead of just naming one.',
+      'If the user asks about a number like $230 and the context only includes tested thresholds such as $200, $300, $500, say that clearly.',
+      'When useful, quote the exact threshold row numbers from the context.',
+      'If the context is insufficient for a claim, say so plainly instead of guessing.',
+      '',
+      `Current AI Apprentice page context:\n${JSON.stringify(context, null, 2)}`,
+      '',
+      `Conversation so far:\n${buildTranscript(messages)}`,
+      '',
+      `User's latest question:\n${question}`
+    ].join('\n');
+
     const response = await fetch(OPENAI_API_URL, {
       method: 'POST',
       headers: {
@@ -51,7 +70,7 @@ export async function POST(request: NextRequest) {
               {
                 type: 'input_text',
                 text:
-                  'You are AI Apprentice inside a trading journal app. Answer only from the supplied page context. Be concise, practical, and numeric. If the user asks for something the context does not contain, say that clearly and suggest what to track next.'
+                  'You are AI Apprentice inside a trading journal app. Be concise, evidence-based, and explicit about uncertainty.'
               }
             ]
           },
@@ -60,19 +79,10 @@ export async function POST(request: NextRequest) {
             content: [
               {
                 type: 'input_text',
-                text: `Current AI Apprentice page context:\n${JSON.stringify(context, null, 2)}`
+                text: prompt
               }
             ]
-          },
-          ...messages.map((message: ChatMessage) => ({
-            role: message.role,
-            content: [
-              {
-                type: 'input_text',
-                text: message.content
-              }
-            ]
-          }))
+          }
         ]
       })
     });

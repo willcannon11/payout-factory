@@ -188,7 +188,15 @@ const buildApprenticeContext = (
   recommended: ThresholdAnalysis | null,
   closeEarly: CloseEarlyAnalysis
 ) => ({
-  focus: 'Per-account daily target coaching. All threshold results are computed using representative per-account P&L, not bundled all-account totals.',
+  focus: 'Per-account daily target coaching. Threshold results are computed from timestamped imported trades using the average running P&L per account for each day, not the full bundled all-account total.',
+  testedThresholds: thresholds,
+  notes: [
+    'Only the listed tested thresholds are evaluated directly. The app does not currently backtest every possible target like $230 or $275.',
+    'Finished Below Target means the day crossed the threshold at some point, then gave some back, but still closed green per account.',
+    'Avg End Of Day P&L is the average per-account finish on days where that target was reached.',
+    'Avg Pullback From Trigger is the average per-account drop from the first cross above the target to the day close.',
+    'Kept % Of Trigger is the average share of the trigger value still retained by the close.'
+  ],
   suggestedDailyTargetPerAccount: recommended
     ? {
       threshold: recommended.threshold,
