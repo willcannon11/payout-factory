@@ -37,6 +37,29 @@ type CloseEarlyAnalysis = {
   netConsequence: number;
 };
 
+type AccountDayPath = {
+  account: string;
+  day: string;
+  final: number;
+  peak: number;
+  path: Array<{
+    time: number;
+    running: number;
+  }>;
+};
+
+type StopTargetBacktest = {
+  threshold: number;
+  reachedDays: number;
+  reachedPct: number;
+  avgRealized: number;
+  avgActualFinal: number;
+  avgDelta: number;
+  betterThanActualDays: number;
+  worseThanActualDays: number;
+  unchangedDays: number;
+};
+
 const tradeDayKey = (date: Date, timeZone = 'America/New_York') => {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone,
@@ -48,7 +71,7 @@ const tradeDayKey = (date: Date, timeZone = 'America/New_York') => {
   return `${values.year}-${values.month}-${values.day}`;
 };
 
-const analyzeThresholds = (trades: ReturnType<typeof useTradingData>['trades']): ThresholdAnalysis[] => {
+const buildAccountDayPaths = (trades: ReturnType<typeof useTradingData>['trades']): AccountDayPath[] => {
   const tradesByDay = new Map<string, typeof trades>();
   for (const trade of trades) {
     const key = tradeDayKey(trade.exitTime);
@@ -57,7 +80,45 @@ const analyzeThresholds = (trades: ReturnType<typeof useTradingData>['trades']):
     tradesByDay.set(key, existing);
   }
 
-  return thresholds.map((threshold) => {
+  const accountDays: AccountDayPath[] = [];
+  for (const [day, dayTrades] of tradesByDay.entries()) {
+    const tradesByAccount = new Map<string, typeof dayTrades>();
+    for (const trade of dayTrades) {
+      const existing = tradesByAccount.get(trade.account) ?? [];
+      existing.push(trade);
+      tradesByAccount.set(trade.account, existing);
+    }
+
+    for (const [account, accountTrades] of tradesByAccount.entries()) {
+      const orderedTrades = accountTrades
+        .slice()
+        .sort((left, right) => left.exitTime.getTime() - right.exitTime.getTime());
+      let running = 0;
+      let peak = Number.NEGATIVE_INFINITY;
+      const path = orderedTrades.map((trade) => {
+        running += trade.netPnl;
+        peak = Math.max(peak, running);
+        return {
+          time: trade.exitTime.getTime(),
+          running
+        };
+      });
+
+      accountDays.push({
+        account,
+        day,
+        final: running,
+        peak: Number.isFinite(peak) ? peak : 0,
+        path
+      });
+    }
+  }
+
+  return accountDays.sort((left, right) => left.day.localeCompare(right.day) || left.account.localeCompare(right.account));
+};
+
+const analyzeThresholds = (accountDays: AccountDayPath[]): ThresholdAnalysis[] =>
+  thresholds.map((threshold) => {
     let daysReached = 0;
     let finishedAboveTarget = 0;
     let finishedBelowTarget = 0;
@@ -67,49 +128,13 @@ const analyzeThresholds = (trades: ReturnType<typeof useTradingData>['trades']):
     let totalRetention = 0;
     const dayOutcomes: ThresholdAnalysis['dayOutcomes'] = [];
 
-    for (const [day, dayTrades] of tradesByDay.entries()) {
-      const accounts = Array.from(new Set(dayTrades.map((trade) => trade.account))).sort((left, right) => left.localeCompare(right));
-      if (accounts.length === 0) {
-        continue;
-      }
-
-      const runningByAccount = new Map(accounts.map((account) => [account, 0]));
-      const eventDeltas = new Map<number, Map<string, number>>();
-      for (const trade of dayTrades) {
-        const time = trade.exitTime.getTime();
-        const existingAtTime = eventDeltas.get(time) ?? new Map<string, number>();
-        existingAtTime.set(trade.account, (existingAtTime.get(trade.account) ?? 0) + trade.netPnl);
-        eventDeltas.set(time, existingAtTime);
-      }
-
-      const orderedTimes = Array.from(eventDeltas.keys()).sort((left, right) => left - right);
-      let reached = false;
-      let triggerValue = 0;
-      let averageRunning = 0;
-
-      for (const time of orderedTimes) {
-        const deltas = eventDeltas.get(time);
-        if (!deltas) {
-          continue;
-        }
-
-        for (const [account, delta] of deltas.entries()) {
-          runningByAccount.set(account, (runningByAccount.get(account) ?? 0) + delta);
-        }
-
-        averageRunning =
-          Array.from(runningByAccount.values()).reduce((sum, value) => sum + value, 0) / accounts.length;
-
-        if (!reached && averageRunning >= threshold) {
-          reached = true;
-          triggerValue = averageRunning;
-        }
-      }
-
+    for (const accountDay of accountDays) {
+      const hit = accountDay.path.find((point) => point.running >= threshold);
+      const reached = Boolean(hit);
       if (!reached) continue;
 
-      const finalValue =
-        Array.from(runningByAccount.values()).reduce((sum, value) => sum + value, 0) / accounts.length;
+      const triggerValue = hit?.running ?? 0;
+      const finalValue = accountDay.final;
       daysReached += 1;
       totalEndOfDayPnl += finalValue;
       totalPullbackFromTrigger += Math.max(triggerValue - finalValue, 0);
@@ -117,13 +142,13 @@ const analyzeThresholds = (trades: ReturnType<typeof useTradingData>['trades']):
 
       if (finalValue >= threshold) {
         finishedAboveTarget += 1;
-        dayOutcomes.push({ day, triggerValue, finalValue, outcome: 'above_target' });
+        dayOutcomes.push({ day: accountDay.day, triggerValue, finalValue, outcome: 'above_target' });
       } else if (finalValue >= 0) {
         finishedBelowTarget += 1;
-        dayOutcomes.push({ day, triggerValue, finalValue, outcome: 'below_target' });
+        dayOutcomes.push({ day: accountDay.day, triggerValue, finalValue, outcome: 'below_target' });
       } else {
         finishedRed += 1;
-        dayOutcomes.push({ day, triggerValue, finalValue, outcome: 'red' });
+        dayOutcomes.push({ day: accountDay.day, triggerValue, finalValue, outcome: 'red' });
       }
     }
 
@@ -139,6 +164,77 @@ const analyzeThresholds = (trades: ReturnType<typeof useTradingData>['trades']):
       dayOutcomes
     };
   });
+
+const backtestStopTargets = (accountDays: AccountDayPath[]) => {
+  const maxPeak = Math.max(0, ...accountDays.map((item) => item.peak));
+  const thresholdsToTest: number[] = [];
+  for (let threshold = 100; threshold <= Math.ceil(maxPeak / 25) * 25; threshold += 25) {
+    thresholdsToTest.push(threshold);
+  }
+
+  const results: StopTargetBacktest[] = thresholdsToTest.map((threshold) => {
+    let reachedDays = 0;
+    let totalRealized = 0;
+    let totalActualFinal = 0;
+    let betterThanActualDays = 0;
+    let worseThanActualDays = 0;
+    let unchangedDays = 0;
+    let totalDelta = 0;
+
+    for (const accountDay of accountDays) {
+      const hit = accountDay.path.find((point) => point.running >= threshold);
+      const realized = hit ? hit.running : accountDay.final;
+
+      if (hit) {
+        reachedDays += 1;
+      }
+
+      totalRealized += realized;
+      totalActualFinal += accountDay.final;
+
+      const delta = realized - accountDay.final;
+      totalDelta += delta;
+
+      if (delta > 0.009) {
+        betterThanActualDays += 1;
+      } else if (delta < -0.009) {
+        worseThanActualDays += 1;
+      } else {
+        unchangedDays += 1;
+      }
+    }
+
+    return {
+      threshold,
+      reachedDays,
+      reachedPct: accountDays.length ? reachedDays / accountDays.length : 0,
+      avgRealized: accountDays.length ? totalRealized / accountDays.length : 0,
+      avgActualFinal: accountDays.length ? totalActualFinal / accountDays.length : 0,
+      avgDelta: accountDays.length ? totalDelta / accountDays.length : 0,
+      betterThanActualDays,
+      worseThanActualDays,
+      unchangedDays
+    };
+  });
+
+  const recommended =
+    results
+      .slice()
+      .sort((left, right) => right.avgRealized - left.avgRealized || left.threshold - right.threshold)[0] ?? null;
+
+  const nearby = recommended
+    ? results.filter((item) => item.threshold >= recommended.threshold - 50 && item.threshold <= recommended.threshold + 50)
+    : [];
+
+  return {
+    totalAccountDays: accountDays.length,
+    uniqueDays: new Set(accountDays.map((item) => item.day)).size,
+    maxFinal: Math.max(0, ...accountDays.map((item) => item.final)),
+    maxPeak,
+    results,
+    recommended,
+    nearby
+  };
 };
 
 const analyzeCloseEarly = (trades: ReturnType<typeof useTradingData>['trades']): CloseEarlyAnalysis => {
@@ -184,31 +280,55 @@ type ChatMessage = {
 };
 
 const buildApprenticeContext = (
+  stopBacktest: ReturnType<typeof backtestStopTargets>,
   analyses: ThresholdAnalysis[],
-  recommended: ThresholdAnalysis | null,
+  recommendedThreshold: ThresholdAnalysis | null,
   closeEarly: CloseEarlyAnalysis
 ) => ({
-  focus: 'Per-account daily target coaching. Threshold results are computed from timestamped imported trades using the average running P&L per account for each day, not the full bundled all-account total.',
+  focus: 'Per-account daily target coaching. The strongest recommendation should come from stop-rule backtesting: what would have happened if trading stopped once a target was first reached on each account-day.',
   testedThresholds: thresholds,
   notes: [
-    'Only the listed tested thresholds are evaluated directly. The app does not currently backtest every possible target like $230 or $275.',
+    'The target explorer table is descriptive. It shows what happened on days you reached a threshold and then kept trading.',
+    'The stop target backtest is prescriptive. It simulates what would have happened if you had actually stopped once the threshold was first reached.',
+    'The stop-rule backtest tests thresholds in $25 increments starting at $100.',
     'Finished Below Target means the day crossed the threshold at some point, then gave some back, but still closed green per account.',
     'Avg End Of Day P&L is the average per-account finish on days where that target was reached.',
     'Avg Pullback From Trigger is the average per-account drop from the first cross above the target to the day close.',
     'Kept % Of Trigger is the average share of the trigger value still retained by the close.'
   ],
-  suggestedDailyTargetPerAccount: recommended
+  stopTargetBacktest: stopBacktest.recommended
     ? {
-      threshold: recommended.threshold,
-      daysReached: recommended.daysReached,
-      finishedAboveTarget: recommended.finishedAboveTarget,
-      finishedBelowTarget: recommended.finishedBelowTarget,
-      finishedRed: recommended.finishedRed,
-      avgEndOfDayPnl: Number(recommended.avgEndOfDayPnl.toFixed(2)),
-      avgPullbackFromTrigger: Number(recommended.avgPullbackFromTrigger.toFixed(2)),
-      keptPctOfTrigger: Number(recommended.keptPctOfTrigger.toFixed(1)),
-      dayOutcomes: recommended.dayOutcomes
+      threshold: stopBacktest.recommended.threshold,
+      totalAccountDays: stopBacktest.totalAccountDays,
+      uniqueDays: stopBacktest.uniqueDays,
+      avgRealized: Number(stopBacktest.recommended.avgRealized.toFixed(2)),
+      avgActualFinal: Number(stopBacktest.recommended.avgActualFinal.toFixed(2)),
+      avgDelta: Number(stopBacktest.recommended.avgDelta.toFixed(2)),
+      reachedDays: stopBacktest.recommended.reachedDays,
+      reachedPct: Number((stopBacktest.recommended.reachedPct * 100).toFixed(1)),
+      betterThanActualDays: stopBacktest.recommended.betterThanActualDays,
+      worseThanActualDays: stopBacktest.recommended.worseThanActualDays,
+      unchangedDays: stopBacktest.recommended.unchangedDays,
+      nearby: stopBacktest.nearby.map((item) => ({
+        threshold: item.threshold,
+        avgRealized: Number(item.avgRealized.toFixed(2)),
+        avgDelta: Number(item.avgDelta.toFixed(2)),
+        reachedDays: item.reachedDays
+      }))
     }
+    : null,
+  suggestedDailyTargetPerAccount: recommendedThreshold
+    ? {
+        threshold: recommendedThreshold.threshold,
+        daysReached: recommendedThreshold.daysReached,
+        finishedAboveTarget: recommendedThreshold.finishedAboveTarget,
+        finishedBelowTarget: recommendedThreshold.finishedBelowTarget,
+        finishedRed: recommendedThreshold.finishedRed,
+        avgEndOfDayPnl: Number(recommendedThreshold.avgEndOfDayPnl.toFixed(2)),
+        avgPullbackFromTrigger: Number(recommendedThreshold.avgPullbackFromTrigger.toFixed(2)),
+        keptPctOfTrigger: Number(recommendedThreshold.keptPctOfTrigger.toFixed(1)),
+        dayOutcomes: recommendedThreshold.dayOutcomes
+      }
     : null,
   thresholdTable: analyses.map((item) => ({
     threshold: item.threshold,
@@ -233,21 +353,23 @@ const buildApprenticeContext = (
 
 export default function AiApprenticePage() {
   const { trades, loading, error } = useTradingData();
-  const analyses = analyzeThresholds(trades).filter((item) => item.daysReached > 0);
+  const accountDays = useMemo(() => buildAccountDayPaths(trades), [trades]);
+  const analyses = useMemo(() => analyzeThresholds(accountDays).filter((item) => item.daysReached > 0), [accountDays]);
+  const stopBacktest = useMemo(() => backtestStopTargets(accountDays), [accountDays]);
   const closeEarly = analyzeCloseEarly(trades);
   const [question, setQuestion] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
-  const recommended = analyses
+  const recommendedThreshold = analyses
     .filter((item) => item.keptPctOfTrigger > 60)
     .sort((left, right) => {
       if (right.daysReached !== left.daysReached) return right.daysReached - left.daysReached;
       return right.keptPctOfTrigger - left.keptPctOfTrigger;
     })[0] ?? analyses[0] ?? null;
   const chatContext = useMemo(
-    () => buildApprenticeContext(analyses, recommended, closeEarly),
-    [analyses, closeEarly, recommended]
+    () => buildApprenticeContext(stopBacktest, analyses, recommendedThreshold, closeEarly),
+    [analyses, closeEarly, recommendedThreshold, stopBacktest]
   );
 
   const submitQuestion = async (event: FormEvent<HTMLFormElement>) => {
@@ -303,28 +425,32 @@ export default function AiApprenticePage() {
 
         <div className="kpi-grid">
           <div className="card accent-card">
-            <h3>Daily Profit Target - Per Account</h3>
-            <div className="value">{recommended ? formatCurrency(recommended.threshold) : 'Not enough data'}</div>
+            <h3>Best Stop Target - Per Account</h3>
+            <div className="value">{stopBacktest.recommended ? formatCurrency(stopBacktest.recommended.threshold) : 'Not enough data'}</div>
             <div className="sub">
-              {recommended
-                ? `${recommended.daysReached} days reached this per-account level, with ${recommended.finishedAboveTarget} finishing above target and ${recommended.finishedRed} ending red.`
-                : 'Import more trades so we can evaluate the per-account level where you should probably shut it down.'}
+              {stopBacktest.recommended
+                ? `Backtested across ${stopBacktest.totalAccountDays} account-days. This is the stop level that would have produced the highest average realized per-account result.`
+                : 'Import more trades so we can backtest where you should probably shut it down.'}
             </div>
           </div>
           <div className="card">
-            <h3>Finished Below Target</h3>
-            <div className="value">{recommended ? `${recommended.finishedBelowTarget}/${recommended.daysReached}` : '0/0'}</div>
-            <div className="sub">Days that hit the target per account, then gave some back but still finished green.</div>
+            <h3>Avg Realized If Stopped</h3>
+            <div className="value">{stopBacktest.recommended ? formatCurrency(stopBacktest.recommended.avgRealized) : '$0.00'}</div>
+            <div className="sub">Average per-account result if you had stopped trading once that level was first reached.</div>
           </div>
           <div className="card">
-            <h3>Days Still Finish Red</h3>
-            <div className="value">{recommended ? `${recommended.finishedRed}/${recommended.daysReached}` : '0/0'}</div>
-            <div className="sub">How often one account crosses the target and still ends the day negative.</div>
+            <h3>Lift Vs Actual</h3>
+            <div className={`value ${(stopBacktest.recommended?.avgDelta ?? 0) >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>
+              {stopBacktest.recommended ? formatCurrency(stopBacktest.recommended.avgDelta) : '$0.00'}
+            </div>
+            <div className="sub">Average per-account improvement versus what your imported data actually finished with.</div>
           </div>
           <div className="card">
-            <h3>Average Giveback - Per Account</h3>
-            <div className="value">{recommended ? formatCurrency(recommended.avgPullbackFromTrigger) : '$0.00'}</div>
-            <div className="sub">Average pullback per account from the first time you crossed the target to the end of the day.</div>
+            <h3>Reach Rate</h3>
+            <div className="value">
+              {stopBacktest.recommended ? `${stopBacktest.recommended.reachedDays}/${stopBacktest.totalAccountDays}` : '0/0'}
+            </div>
+            <div className="sub">How often that stop target was actually reached across your imported per-account trading days.</div>
           </div>
           <div className="card">
             <h3>Missed Profit From Closing Early</h3>
@@ -361,8 +487,54 @@ export default function AiApprenticePage() {
 
         <section className="card">
           <div className="section-header">
+            <div className="section-title">Stop Target Backtest</div>
+            <div className="sub">This is the recommendation engine: it simulates stopping for the day the first time each target was reached on an account.</div>
+          </div>
+          {loading ? (
+            <div className="summary-panel">Backtesting stop targets...</div>
+          ) : !stopBacktest.recommended ? (
+            <div className="summary-panel">Not enough trading history yet to backtest a stop target.</div>
+          ) : (
+            <>
+              <div className="summary-panel" style={{ marginBottom: '16px' }}>
+                {`Best backtested target right now is ${formatCurrency(stopBacktest.recommended.threshold)} per account. If you had stopped there, your average realized day would have been ${formatCurrency(stopBacktest.recommended.avgRealized)} per account, versus ${formatCurrency(stopBacktest.recommended.avgActualFinal)} from the actual imported outcomes.`}
+              </div>
+              <table className="table apprentice-table">
+                <thead>
+                  <tr>
+                    <th>Target</th>
+                    <th>Days Reached</th>
+                    <th>Reach Rate</th>
+                    <th>Avg Realized If Stopped</th>
+                    <th>Avg Actual Finish</th>
+                    <th>Avg Lift Vs Actual</th>
+                    <th>Better Days</th>
+                    <th>Worse Days</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stopBacktest.nearby.map((item) => (
+                    <tr key={`stop-${item.threshold}`}>
+                      <td>{formatCurrency(item.threshold)}</td>
+                      <td>{item.reachedDays}</td>
+                      <td>{(item.reachedPct * 100).toFixed(0)}%</td>
+                      <td>{formatCurrency(item.avgRealized)}</td>
+                      <td>{formatCurrency(item.avgActualFinal)}</td>
+                      <td className={item.avgDelta >= 0 ? 'pnl-positive' : 'pnl-negative'}>{formatCurrency(item.avgDelta)}</td>
+                      <td>{item.betterThanActualDays}</td>
+                      <td>{item.worseThanActualDays}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </section>
+
+        <section className="card" style={{ marginTop: '18px' }}>
+          <div className="section-header">
             <div className="section-title">Daily Target Explorer</div>
-            <div className="sub">Computed from timestamped imported trades using the average running P&amp;L per account for each day, not the full 15-account total.</div>
+            <div className="sub">This section is descriptive, not prescriptive. It shows what happened after you kept trading on days that reached each target.</div>
           </div>
           {loading ? (
             <div className="summary-panel">Crunching your trade history...</div>

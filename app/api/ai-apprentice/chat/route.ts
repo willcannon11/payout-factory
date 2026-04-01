@@ -12,6 +12,45 @@ type ChatMessage = {
 const buildTranscript = (messages: ChatMessage[]) =>
   messages.map((message) => `${message.role === 'assistant' ? 'AI Apprentice' : 'User'}: ${message.content}`).join('\n\n');
 
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value);
+
+const buildTargetRecommendation = (context: Record<string, any>, question: string) => {
+  const backtest = context?.stopTargetBacktest;
+  if (!backtest?.threshold) {
+    return null;
+  }
+
+  const nearby = Array.isArray(backtest.nearby) ? backtest.nearby : [];
+  const comparison = nearby
+    .slice(0, 5)
+    .map((item: Record<string, any>) =>
+      `${formatCurrency(Number(item.threshold))}: avg realized ${formatCurrency(Number(item.avgRealized))}, lift ${formatCurrency(Number(item.avgDelta))}, reached ${Number(item.reachedDays)} days`
+    )
+    .join('; ');
+
+  const lowerQuestion = question.toLowerCase();
+  const asksForSpecific =
+    lowerQuestion.includes('specific') ||
+    lowerQuestion.includes('what should') ||
+    lowerQuestion.includes('daily profit target') ||
+    lowerQuestion.includes('stop target');
+
+  if (!asksForSpecific) {
+    return null;
+  }
+
+  return [
+    `Based on your imported data, your best current daily profit target is ${formatCurrency(Number(backtest.threshold))} per account.`,
+    `That target produced the highest average realized result in the stop-rule backtest: ${formatCurrency(Number(backtest.avgRealized))} per account-day, versus ${formatCurrency(Number(backtest.avgActualFinal))} from the actual imported finishes, for a lift of ${formatCurrency(Number(backtest.avgDelta))}.`,
+    `It was reached on ${Number(backtest.reachedDays)} of ${Number(backtest.totalAccountDays)} account-days (${Number(backtest.reachedPct).toFixed(1)}%).`,
+    comparison ? `Closest tested comparisons: ${comparison}.` : '',
+    'This recommendation comes from simulating “stop trading for the day the first time that profit target is reached,” not from the descriptive target table.'
+  ]
+    .filter(Boolean)
+    .join(' ');
+};
+
 export async function POST(request: NextRequest) {
   try {
     const openAiKey = process.env.OPENAI_API_KEY;
@@ -38,13 +77,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'A question is required.' }, { status: 400 });
     }
 
+    const deterministicTargetAnswer = buildTargetRecommendation(context as Record<string, any>, question);
+    if (deterministicTargetAnswer) {
+      return NextResponse.json({ answer: deterministicTargetAnswer });
+    }
+
     const model = process.env.OPENAI_CHAT_MODEL || process.env.OPENAI_OCR_MODEL || 'gpt-4.1-mini';
     const prompt = [
       'You are AI Apprentice inside a trading journal app.',
       'Answer only from the supplied page context and conversation transcript.',
       'Be specific, numeric, and practical.',
-      'When recommending a target, compare the tested thresholds explicitly instead of just naming one.',
-      'If the user asks about a number like $230 and the context only includes tested thresholds such as $200, $300, $500, say that clearly.',
+      'Prefer the stopTargetBacktest section when the user asks what their daily target should be.',
+      'The thresholdTable is descriptive. The stopTargetBacktest is prescriptive and should drive target recommendations.',
+      'When recommending a target, compare the tested stop targets explicitly instead of just naming one.',
+      'If the user asks about a number like $230 and the context only includes tested stop targets such as $425, $450, $475, say that clearly.',
       'When useful, quote the exact threshold row numbers from the context.',
       'If the context is insufficient for a claim, say so plainly instead of guessing.',
       '',
