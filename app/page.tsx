@@ -28,13 +28,6 @@ const formatCurrency = (value: number) =>
 const formatDays = (value: number) => `${value.toFixed(1)} days`;
 
 const formatMinutes = (value: number) => `${value.toFixed(1)} min`;
-const formatDateTime = (value: Date) =>
-  new Intl.DateTimeFormat('en-US', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit'
-  }).format(value);
 const normalizeAccountKey = (value: string) => value.replace(/\D/g, '').slice(-2);
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 const addDays = (date: Date, days: number) => {
@@ -59,6 +52,20 @@ const payoutRequestTradingDaySeed: Record<string, number> = {
 };
 
 type RangePreset = '30d' | '60d' | 'ytd' | 'month' | 'week' | 'quarter' | 'custom';
+
+const normalizeTradeTag = (tag: string) => {
+  const normalized = tag.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (normalized === 'mod continuation 2' || normalized === 'modified continuation 2') {
+    return 'Mod Continuation 2';
+  }
+  if (normalized === 'fibrectangle') {
+    return 'FibRectangle';
+  }
+  if (normalized === 'pdl ceiling') {
+    return 'PDL Ceiling';
+  }
+  return tag.trim();
+};
 
 export default function DashboardPage() {
   const [rangePreset, setRangePreset] = useState<RangePreset>('30d');
@@ -128,16 +135,52 @@ export default function DashboardPage() {
     Math.floor((rangeConfig.end.getTime() - rangeConfig.start.getTime()) / 86400000) + 1
   );
   const averageDailyProfit = totalPnl(filteredTrades) / rangeDays;
-  const bestTrade = filteredTrades.reduce<typeof filteredTrades[number] | null>(
-    (best, trade) => (!best || trade.netPnl > best.netPnl ? trade : best),
+  const tagPerformance = useMemo(() => {
+    const tagMap = new Map<
+      string,
+      {
+        tag: string;
+        trades: typeof filteredTrades;
+      }
+    >();
+
+    for (const trade of filteredTrades) {
+      const normalizedTags = Array.from(new Set(trade.tags.map(normalizeTradeTag).filter(Boolean)));
+      for (const tag of normalizedTags) {
+        const existing = tagMap.get(tag) ?? { tag, trades: [] };
+        existing.trades.push(trade);
+        tagMap.set(tag, existing);
+      }
+    }
+
+    return Array.from(tagMap.values()).map((entry) => {
+      const longTrades = entry.trades.filter((trade) => trade.side === 'Long');
+      const shortTrades = entry.trades.filter((trade) => trade.side === 'Short');
+      const direction =
+        longTrades.length === shortTrades.length
+          ? 'Mixed'
+          : longTrades.length > shortTrades.length
+            ? 'Long'
+            : 'Short';
+
+      return {
+        tag: entry.tag,
+        trades: entry.trades.length,
+        pnl: totalPnl(entry.trades),
+        winRate: winRate(entry.trades),
+        direction,
+        avgTrade: entry.trades.length ? totalPnl(entry.trades) / entry.trades.length : 0
+      };
+    });
+  }, [filteredTrades]);
+  const bestTag = tagPerformance.reduce<typeof tagPerformance[number] | null>(
+    (best, tag) => (!best || tag.pnl > best.pnl ? tag : best),
     null
   );
-  const worstTrade = filteredTrades.reduce<typeof filteredTrades[number] | null>(
-    (worst, trade) => (!worst || trade.netPnl < worst.netPnl ? trade : worst),
+  const worstTag = tagPerformance.reduce<typeof tagPerformance[number] | null>(
+    (worst, tag) => (!worst || tag.pnl < worst.pnl ? tag : worst),
     null
   );
-  const directionWinRate = (direction: 'Long' | 'Short') =>
-    winRate(filteredTrades.filter((trade) => trade.side === direction));
 
   const payoutCycleAvg = (() => {
     if (payouts.length < 2) return 0;
@@ -255,34 +298,30 @@ export default function DashboardPage() {
             <div className="sub">Request date to paid date</div>
           </div>
           <div className="card">
-            <h3>Best Trade</h3>
-            <div className={`value ${bestTrade && bestTrade.netPnl >= 0 ? 'pnl-positive' : ''}`}>
-              {bestTrade ? formatCurrency(bestTrade.netPnl) : '$0.00'}
+            <h3>Best Trade Tag</h3>
+            <div className={`value ${bestTag && bestTag.pnl >= 0 ? 'pnl-positive' : ''}`}>
+              {bestTag ? formatCurrency(bestTag.pnl) : '$0.00'}
             </div>
             <div className="sub">
-              {bestTrade
-                ? `${bestTrade.instrument} · ${bestTrade.side} · Qty ${bestTrade.quantity}`
-                : 'No trades in the selected range'}
+              {bestTag ? `${bestTag.tag} · ${bestTag.direction} · ${bestTag.trades} tagged trades` : 'No tagged trades in the selected range'}
             </div>
-            {bestTrade ? (
+            {bestTag ? (
               <div className="sub">
-                {formatDateTime(bestTrade.entryTime)} to {formatDateTime(bestTrade.exitTime)} · {directionWinRate(bestTrade.side).toFixed(1)}% {bestTrade.side.toLowerCase()} win rate
+                {bestTag.winRate.toFixed(1)}% win rate · Avg trade {formatCurrency(bestTag.avgTrade)}
               </div>
             ) : null}
           </div>
           <div className="card">
-            <h3>Worst Trade</h3>
-            <div className={`value ${worstTrade && worstTrade.netPnl < 0 ? 'pnl-negative' : ''}`}>
-              {worstTrade ? formatCurrency(worstTrade.netPnl) : '$0.00'}
+            <h3>Worst Trade Tag</h3>
+            <div className={`value ${worstTag && worstTag.pnl < 0 ? 'pnl-negative' : ''}`}>
+              {worstTag ? formatCurrency(worstTag.pnl) : '$0.00'}
             </div>
             <div className="sub">
-              {worstTrade
-                ? `${worstTrade.instrument} · ${worstTrade.side} · Qty ${worstTrade.quantity}`
-                : 'No trades in the selected range'}
+              {worstTag ? `${worstTag.tag} · ${worstTag.direction} · ${worstTag.trades} tagged trades` : 'No tagged trades in the selected range'}
             </div>
-            {worstTrade ? (
+            {worstTag ? (
               <div className="sub">
-                {formatDateTime(worstTrade.entryTime)} to {formatDateTime(worstTrade.exitTime)} · {directionWinRate(worstTrade.side).toFixed(1)}% {worstTrade.side.toLowerCase()} win rate
+                {worstTag.winRate.toFixed(1)}% win rate · Avg trade {formatCurrency(worstTag.avgTrade)}
               </div>
             ) : null}
           </div>
