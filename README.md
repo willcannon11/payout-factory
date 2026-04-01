@@ -33,6 +33,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 OPENAI_API_KEY=your_openai_api_key
 # optional
 OPENAI_OCR_MODEL=gpt-4.1-mini
+OPENAI_CHAT_MODEL=gpt-4.1-mini
 ```
 
 5. Install and run:
@@ -47,6 +48,7 @@ npm run dev
 - Add the same `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in Vercel environment variables.
 - Add `OPENAI_API_KEY` so screenshot balance imports use hosted OCR instead of local `tesseract`.
 - Optionally add `OPENAI_OCR_MODEL` if you want to override the default hosted OCR model (`gpt-4.1-mini`).
+- Optionally add `OPENAI_CHAT_MODEL` if you want a different model for AI Apprentice chat responses.
 
 ## Notes
 - Point values used to compute P&L: ES=50, MES=5, NQ=20, MNQ=2, YM=5, MYM=0.5, RTY=50, M2K=5, CL=1000, MCL=100, GC=100, MGC=10.
