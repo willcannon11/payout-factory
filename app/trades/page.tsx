@@ -47,6 +47,21 @@ function TradesPageContent() {
     );
   }, [selectedDay, trades]);
 
+  const availableTradeDays = useMemo(
+    () =>
+      Array.from(new Set(groupCopiedTrades(trades).map((bundle) => toDateKey(bundle.representative.exitTime)))).sort((left, right) =>
+        left.localeCompare(right)
+      ),
+    [trades]
+  );
+
+  const selectedDayIndex = selectedDay ? availableTradeDays.indexOf(selectedDay) : -1;
+  const previousTradeDay = selectedDayIndex > 0 ? availableTradeDays[selectedDayIndex - 1] : null;
+  const nextTradeDay =
+    selectedDayIndex >= 0 && selectedDayIndex < availableTradeDays.length - 1
+      ? availableTradeDays[selectedDayIndex + 1]
+      : null;
+
   const allSelected =
     bundledTradeList.length > 0 && bundledTradeList.every((bundle) => selectedBundles[bundle.key]);
 
@@ -139,6 +154,10 @@ function TradesPageContent() {
     reload();
   };
 
+  const goToTradeDay = (day: string) => {
+    router.push(`/trades?day=${day}`);
+  };
+
   return (
     <div className="app-shell">
       <Sidebar />
@@ -152,14 +171,37 @@ function TradesPageContent() {
 
         {selectedDay ? (
           <div className="callout" style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <div>Showing only bundled trades for <strong>{selectedDay}</strong>.</div>
-            <button
-              type="button"
-              className="btn secondary"
-              onClick={() => router.push('/trades')}
-            >
-              Clear Day Filter
-            </button>
+            <div>
+              <div>Showing only bundled trades for <strong>{selectedDay}</strong>.</div>
+              <div className="sub" style={{ marginTop: '6px' }}>
+                {selectedDayIndex >= 0 ? `Day ${selectedDayIndex + 1} of ${availableTradeDays.length} with imported trades.` : 'Day navigation is based on your imported trade dates.'}
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => previousTradeDay && goToTradeDay(previousTradeDay)}
+                disabled={!previousTradeDay}
+              >
+                Previous Day
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => nextTradeDay && goToTradeDay(nextTradeDay)}
+                disabled={!nextTradeDay}
+              >
+                Next Day
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => router.push('/trades')}
+              >
+                Clear Day Filter
+              </button>
+            </div>
           </div>
         ) : null}
 
