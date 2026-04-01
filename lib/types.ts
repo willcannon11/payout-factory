@@ -26,6 +26,8 @@ export type Trade = {
   netPnl: number;
   tags: string[];
   note?: string | null;
+  closeEarlyOutcome?: 'winner' | 'loser' | null;
+  closeEarlyTicks?: number | null;
   sourceFile: string;
   fingerprintOrdinal?: number;
 };
@@ -46,6 +48,8 @@ export type TradeRow = {
   net_pnl: number;
   trade_tags?: string[] | null;
   trade_note?: string | null;
+  close_early_outcome?: 'winner' | 'loser' | null;
+  close_early_ticks?: number | null;
   source_file: string;
 };
 

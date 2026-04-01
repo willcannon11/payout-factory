@@ -60,6 +60,12 @@ If you already ran the original schema before tags/notes were added, run this in
 ```sql
 alter table trades add column if not exists trade_tags text[] not null default '{}';
 alter table trades add column if not exists trade_note text;
+alter table trades add column if not exists close_early_outcome text;
+alter table trades add column if not exists close_early_ticks numeric;
+alter table trades drop constraint if exists trades_close_early_outcome_check;
+alter table trades
+  add constraint trades_close_early_outcome_check
+  check (close_early_outcome in ('winner', 'loser'));
 ```
 
 If you already created the `payouts` table before approval and received dates were added, run:

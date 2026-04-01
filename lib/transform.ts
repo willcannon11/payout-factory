@@ -15,6 +15,8 @@ export const mapTradeRow = (row: TradeRow): Trade => ({
   netPnl: row.net_pnl,
   tags: row.trade_tags ?? [],
   note: row.trade_note,
+  closeEarlyOutcome: row.close_early_outcome,
+  closeEarlyTicks: row.close_early_ticks,
   sourceFile: row.source_file
 });
 

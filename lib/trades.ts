@@ -1,28 +1,5 @@
+import { pointValueFor } from './instruments';
 import { CsvRow, Trade } from './types';
-
-const POINT_VALUE_MAP: Record<string, number> = {
-  ES: 50,
-  MES: 5,
-  NQ: 20,
-  MNQ: 2,
-  YM: 5,
-  MYM: 0.5,
-  RTY: 50,
-  M2K: 5,
-  CL: 1000,
-  MCL: 100,
-  GC: 100,
-  MGC: 10,
-  SI: 5000,
-  SIL: 1000
-};
-
-const instrumentKey = (instrument: string) => instrument.split(' ')[0] || instrument;
-
-const pointValueFor = (instrument: string) => {
-  const key = instrumentKey(instrument).toUpperCase();
-  return POINT_VALUE_MAP[key] ?? 1;
-};
 
 type OpenLot = {
   instrument: string;

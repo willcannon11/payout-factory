@@ -33,7 +33,7 @@ function TradesPageContent() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [selectedBundles, setSelectedBundles] = useState<Record<string, boolean>>({});
-  const [drafts, setDrafts] = useState<Record<string, { tags: string; note: string }>>({});
+  const [drafts, setDrafts] = useState<Record<string, { tags: string; note: string; closeEarlyOutcome: '' | 'winner' | 'loser'; closeEarlyTicks: string }>>({});
   const selectedDay = searchParams.get('day');
 
   const bundledTradeList = useMemo(() => {
@@ -60,18 +60,22 @@ function TradesPageContent() {
       return;
     }
 
-    const draft = drafts[bundle.key] ?? { tags: '', note: '' };
+    const draft = drafts[bundle.key] ?? { tags: '', note: '', closeEarlyOutcome: '', closeEarlyTicks: '' };
     const tags = draft.tags
       .split(',')
       .map((tag) => tag.trim())
       .filter(Boolean);
+    const closeEarlyOutcome = draft.closeEarlyOutcome || null;
+    const closeEarlyTicks = draft.closeEarlyTicks.trim() ? Math.abs(Number(draft.closeEarlyTicks)) : null;
 
     setSavingId(bundle.key);
     const { error: updateError } = await supabase
       .from('trades')
       .update({
         trade_tags: tags,
-        trade_note: draft.note || null
+        trade_note: draft.note || null,
+        close_early_outcome: closeEarlyOutcome,
+        close_early_ticks: closeEarlyOutcome && closeEarlyTicks !== null && Number.isFinite(closeEarlyTicks) ? closeEarlyTicks : null
       })
       .in('id', tradeIds);
 
@@ -162,7 +166,7 @@ function TradesPageContent() {
         {error ? <div className="callout danger-callout">{error}</div> : null}
         {message ? <div className="callout">{message}</div> : null}
         <div className="callout" style={{ marginBottom: '16px' }}>
-          If trade tag saves fail, run the small `alter table` snippet in the README once so your existing `trades` table gets the new tag and note columns.
+          If trade journal saves fail, run the small `alter table` snippet in the README once so your existing `trades` table gets the latest journal columns.
         </div>
 
         <section className="card">
@@ -185,7 +189,9 @@ function TradesPageContent() {
                 const uniqueAccounts = Array.from(new Set(bundle.accounts)).sort((left, right) => left.localeCompare(right));
                 const draft = drafts[bundle.key] ?? {
                   tags: trade.tags.join(', '),
-                  note: trade.note ?? ''
+                  note: trade.note ?? '',
+                  closeEarlyOutcome: trade.closeEarlyOutcome ?? '',
+                  closeEarlyTicks: trade.closeEarlyTicks?.toString() ?? ''
                 };
 
                 return (
@@ -239,6 +245,45 @@ function TradesPageContent() {
                         })
                       }
                     />
+                    <div className="form-row" style={{ marginTop: '12px', gridTemplateColumns: 'minmax(180px, 220px) minmax(180px, 220px)' }}>
+                      <select
+                        className="input"
+                        value={draft.closeEarlyOutcome}
+                        onChange={(event) =>
+                          setDrafts({
+                            ...drafts,
+                            [bundle.key]: {
+                              ...draft,
+                              closeEarlyOutcome: event.target.value as '' | 'winner' | 'loser'
+                            }
+                          })
+                        }
+                      >
+                        <option value="">No close-early review</option>
+                        <option value="winner">Closed early, would&apos;ve been a winner</option>
+                        <option value="loser">Closed early, would&apos;ve been a loser</option>
+                      </select>
+                      <input
+                        className="input"
+                        type="number"
+                        step="0.25"
+                        min="0"
+                        placeholder="Ticks left after exit"
+                        value={draft.closeEarlyTicks}
+                        onChange={(event) =>
+                          setDrafts({
+                            ...drafts,
+                            [bundle.key]: {
+                              ...draft,
+                              closeEarlyTicks: event.target.value
+                            }
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="sub" style={{ marginTop: '8px' }}>
+                      If you closed the trade early, capture whether the remaining move would&apos;ve been a winner or loser and how many ticks were left on the table from your exit.
+                    </div>
                     <div className="trade-tags">
                       {trade.tags.map((tag) => (
                         <span key={tag} className="tag-chip">{tag}</span>

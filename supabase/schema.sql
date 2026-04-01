@@ -14,6 +14,8 @@ create table if not exists trades (
   net_pnl numeric not null,
   trade_tags text[] not null default '{}',
   trade_note text,
+  close_early_outcome text check (close_early_outcome in ('winner', 'loser')),
+  close_early_ticks numeric,
   source_file text,
   created_at timestamptz default now()
 );
