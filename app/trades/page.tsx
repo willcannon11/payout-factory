@@ -25,6 +25,12 @@ const toDateKey = (value: Date) => {
   return `${year}-${month}-${day}`;
 };
 
+const parseTags = (value: string) =>
+  value
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+
 function TradesPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -34,6 +40,7 @@ function TradesPageContent() {
   const [deleting, setDeleting] = useState(false);
   const [selectedBundles, setSelectedBundles] = useState<Record<string, boolean>>({});
   const [drafts, setDrafts] = useState<Record<string, { tags: string; note: string; closeEarlyOutcome: '' | 'winner' | 'loser'; closeEarlyTicks: string }>>({});
+  const [recentlySavedBundles, setRecentlySavedBundles] = useState<Record<string, boolean>>({});
   const selectedDay = searchParams.get('day');
 
   const bundledTradeList = useMemo(() => {
@@ -76,10 +83,7 @@ function TradesPageContent() {
     }
 
     const draft = drafts[bundle.key] ?? { tags: '', note: '', closeEarlyOutcome: '', closeEarlyTicks: '' };
-    const tags = draft.tags
-      .split(',')
-      .map((tag) => tag.trim())
-      .filter(Boolean);
+    const tags = parseTags(draft.tags);
     const closeEarlyOutcome = draft.closeEarlyOutcome || null;
     const closeEarlyTicks = draft.closeEarlyTicks.trim() ? Math.abs(Number(draft.closeEarlyTicks)) : null;
 
@@ -101,6 +105,26 @@ function TradesPageContent() {
       return;
     }
 
+    setDrafts((current) => ({
+      ...current,
+      [bundle.key]: {
+        tags: tags.join(', '),
+        note: draft.note,
+        closeEarlyOutcome: draft.closeEarlyOutcome,
+        closeEarlyTicks: closeEarlyOutcome && closeEarlyTicks !== null ? closeEarlyTicks.toString() : ''
+      }
+    }));
+    setRecentlySavedBundles((current) => ({
+      ...current,
+      [bundle.key]: true
+    }));
+    window.setTimeout(() => {
+      setRecentlySavedBundles((current) => {
+        const next = { ...current };
+        delete next[bundle.key];
+        return next;
+      });
+    }, 2500);
     setMessage(`Bundle updated across ${tradeIds.length} account${tradeIds.length === 1 ? '' : 's'}.`);
     reload();
   };
@@ -235,9 +259,10 @@ function TradesPageContent() {
                   closeEarlyOutcome: trade.closeEarlyOutcome ?? '',
                   closeEarlyTicks: trade.closeEarlyTicks?.toString() ?? ''
                 };
+                const visibleTags = parseTags(draft.tags);
 
                 return (
-                  <div key={bundle.key} className="trade-row-card">
+                  <div key={bundle.key} className={`trade-row-card${recentlySavedBundles[bundle.key] ? ' trade-row-card-saved' : ''}`}>
                     <div className="trade-row-header">
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <input
@@ -327,7 +352,7 @@ function TradesPageContent() {
                       If you closed the trade early, capture whether the remaining move would&apos;ve been a winner or loser and how many ticks were left on the table from your exit.
                     </div>
                     <div className="trade-tags">
-                      {trade.tags.map((tag) => (
+                      {visibleTags.map((tag) => (
                         <span key={tag} className="tag-chip">{tag}</span>
                       ))}
                     </div>
